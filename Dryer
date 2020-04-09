@@ -1,0 +1,58 @@
+#define sensorMax 150
+
+mtype:states = {on, off};
+mtype:states sensor = off, dryer = off;
+mtype:process = {procSensor, procHeater};
+mtype:process trigger = procSensor;	
+
+int offSensorCounter = 0, timeoutSensor = 0, timeoutHeater = 0;
+
+active proctype Sensor() provided (trigger == procSensor){
+	initSensor:
+	  	atomic {
+	  	sensor = on;
+	  	offSensorCounter = 1;
+	  	trigger = procHeater;
+	  	goto offSensor;}
+	 offSensor:
+	 	atomic {
+	 	sensor = off;
+	 	if
+	 	::(timeoutSensor != offSensorCounter) -> timeoutSensor++; trigger = procHeater; goto offSensor;
+	 	::else -> timeoutSensor = 0; offSensorCounter++; trigger = procHeater; goto onSensor;
+	 	fi;}	 		
+	 onSensor:
+	  	atomic{
+	  	sensor = on;
+	  	if
+	  	:: (offSensorCounter >= sensorMax) -> trigger = procHeater; goto initSensor;
+	  	:: else -> skip;
+	  	fi;
+	  	if
+	  	::(timeoutSensor != offSensorCounter) -> timeoutSensor++; trigger = procHeater; goto onSensor;
+	  	::else -> timeoutSensor=0; trigger = procHeater; goto offSensor;
+	  	fi;}
+}
+
+active proctype Heater() provided (trigger == procHeater) {
+	waiting:
+		atomic{
+		if 
+		::(sensor == on) -> dryer = on; trigger = procSensor; goto drying;
+		::else -> dryer = off; trigger = procSensor; goto waiting;
+		fi;}	
+	drying:
+		atomic{
+		if
+		::(sensor == on) -> timeoutHeater = 0;
+		::else -> skip;
+		fi;
+		if
+		::(timeoutHeater != 10) -> timeoutHeater++; trigger = procSensor;  goto drying;
+		::else -> timeoutHeater = 0; trigger = procSensor; goto waiting;
+		fi;	}
+}
+
+ltl f1 {([](((sensor == off)&&(dryer == off)) -> X(dryer == off)))&&(<>(sensor == on))&&(<>(dryer == on))}	
+ltl f3 {([]((sensor == on) -> X((trigger == procHeater) U (dryer == on))||(!(trigger == procHeater) U (dryer == on))))&&(<>(sensor == on))}
+ltl f2 {([](((timeoutHeater == 10)&&(sensor == off)) -> ((dryer == off) U (sensor == off))))&&(<>(sensor == on))}
