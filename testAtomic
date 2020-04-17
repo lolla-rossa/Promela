@@ -1,0 +1,23 @@
+int A = 0, B = 0, C = 0;
+
+proctype proc1(){
+	atomic {
+		A++;
+		B++;
+	}
+}
+
+proctype proc2(){
+	atomic{
+		C++;
+		B++;
+	}
+}
+
+init {
+	run proc1();
+	run proc2();
+}
+
+ltl f1 {[]((A == 1) -> X(C == 1))}
+ltl f2 {[]((A == 1) -> X(B == 1))}
