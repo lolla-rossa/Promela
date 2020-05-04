@@ -1,87 +1,98 @@
-#define imitatorMax 150
 #define timeoutHeater 10
+#define numberOfProcess 3
 
 mtype:states = {on, off};
-mtype:states I_OBJECT = off, O_FAN_HEATER = off;
-mtype:process = {procImitator, procHeater};
-mtype:process currentProc = procImitator;	
-
-
-mtype:statesImitator = {Init, Off, On};
-mtype:statesImitator stateImitator; 
+mtype:process = {procTimer, procHeater, procImitator};	
 mtype:statesHeater = {Waiting, Drying};
-mtype:statesHeater stateHeater;
+mtype:states = {Start, Stop};
+mtype:states state[numberOfProcess];
 
+mtype:statesHeater stateHeater = Waiting;
+mtype:process currentProc = procImitator;
+mtype:states I_OBJECT = off, O_FAN_HEATER = off;
+	
+byte timerImitator = 0, timerHeater = 0, timerTimer = 0, i = 0;
 
-byte imitatorCounter = 0, timerImitator = 0, timerHeater = 0;
+active proctype Init() {
+	atomic {
+	for (i : 1 .. numberOfProcess){
+		state[i-1] = Start;
+	}
+	run Imitator();
+	run Heater();
+	run Timer();}
+}
 
-active proctype Imitator() provided (currentProc == procImitator){
-	/*loop:
-		atomic {
-			currentProc = procHeater;		
+proctype Imitator() provided (currentProc == procImitator){
+	do
+	::atomic {
 			if
 			::(true) -> I_OBJECT = on;
 			::(true) -> I_OBJECT = off;
 			fi;
-		 	goto loop; 
-			} */ 		
-	 initImitator:
-	  	atomic {
-	  	currentProc = procHeater;
-	  	stateImitator = Init;
-	  	I_OBJECT = on;
-	  	imitatorCounter = 1;
-	  	goto offImitator;}
-	 offImitator:
-	 	atomic {
-	 	currentProc = procHeater;
-	 	stateImitator = Off;
-	 	timerImitator++; 
-	 	I_OBJECT = off; 
-	 	if
-	 	::(timerImitator >= imitatorCounter) -> timerImitator = 0; imitatorCounter++; goto onImitator;
-	 	::else -> goto offImitator;
-	 	fi;}	 		
-	 onImitator:
-	  	atomic{
-	  	currentProc = procHeater; 
-	  	stateImitator = On;
-	  	timerImitator++;
-	  	I_OBJECT = on;
-	  	if
-	  	::(imitatorCounter >= imitatorMax) -> goto initImitator;
-	  	::(timerImitator >= imitatorCounter) -> timerImitator=0; goto offImitator;
-	  	::else -> goto onImitator;
-	  	fi;}  	
+			i = procImitator-1;
+			do::
+				i = (i+1)%numberOfProcess;
+				if
+				::(state[i] == Start) -> break;
+				::else -> skip;
+				fi;
+			od; 
+			currentProc = i+1;}
+	od; 		
 }
 
-active proctype Heater() provided (currentProc == procHeater) {
-	waiting:
-		atomic{
-		currentProc = procImitator;
-		stateHeater = Waiting;
-		if 
-		::(I_OBJECT == on) -> O_FAN_HEATER = on; goto drying;
-		::else -> O_FAN_HEATER = off; goto waiting;
-		fi;}	
-	drying:
-		atomic{
-		currentProc = procImitator;
-		stateHeater = Drying;
-		timerHeater++;
+proctype Heater() provided (currentProc == procHeater) {
+	do
+	::atomic{
 		if
-		::(I_OBJECT == on) -> timerHeater = 0;
-		::(timerHeater >= timeoutHeater) -> timerHeater = 0; goto waiting;
-		::else -> goto drying;
-		fi;}
+		::(stateHeater == Waiting) -> {
+			if 
+			::(I_OBJECT == on) -> O_FAN_HEATER = on; stateHeater = Drying;
+			::else -> O_FAN_HEATER = off; 
+			fi; }
+		::(stateHeater == Drying) -> state[procHeater-1] = Stop; state[procTimer-1] = Start;
+		fi;
+		i = procHeater-1;
+		do::
+			i = (i+1)%numberOfProcess;
+			if
+			::(state[i] == Start) -> break;
+			::else -> skip;
+			fi;
+		od;
+		currentProc = i+1;
+	}
+	od;
+}
+
+proctype Timer() provided (currentProc == procTimer) {
+	do
+	::atomic {
+		timerTimer++;
+		if
+			::(I_OBJECT == on) -> timerTimer = 0; 
+			::(timerTimer >= timeoutHeater) -> timerTimer = 0; state[procHeater-1] = Start; state[procTimer-1] = Stop; stateHeater = Waiting;
+			::else -> skip;
+		fi;
+		i = procTimer-1;
+		do::
+			i = (i+1)%numberOfProcess;
+			if
+			::(state[i] == Start) -> break;
+			::else -> skip;
+			fi;
+		od;
+		currentProc = i+1;
+	}
+	od;
 }
 
 ltl f1 {[](((I_OBJECT == off)&&(O_FAN_HEATER == off)) -> X(O_FAN_HEATER == off))}
 ltl f2 {[](((I_OBJECT == on)&&(O_FAN_HEATER == on)) -> X(O_FAN_HEATER == on))}
-ltl f3 {[]((I_OBJECT == on) -> X((currentProc == procHeater) U (O_FAN_HEATER == on)))}
+ltl f3 {[]((I_OBJECT == on) -> X(O_FAN_HEATER == on))}
 ltl f4 {[](((timerHeater >= 10)&&(I_OBJECT == off)) -> ((O_FAN_HEATER == off) U (I_OBJECT == off)))}
 ltl f5 {[]((timerHeater >= 10)-> X(((I_OBJECT == off)->(O_FAN_HEATER == off))||((I_OBJECT == on)->(O_FAN_HEATER == on))))}
 ltl f6 {[]((timerHeater >= 10) -> X(stateHeater == Waiting))}
 ltl f7 {[]((timerHeater >= 10) -> X(timerHeater == 0))}
-ltl f8 {[]((imitatorCounter >= imitatorMax) -> X((imitatorCounter == 1)))}
-ltl f9 {[]((timerImitator >= imitatorCounter) -> X(timerImitator == 0))}
+ltl f8 {[]((stateHeater == Drying)->X(currentProc == procTimer))}
